@@ -1,0 +1,402 @@
+name: beacon-local
+
+x-app-base: &app-base
+  image: beacon:local
+  build:
+    context: ..
+    dockerfile: infra/Dockerfile
+    target: development
+  volumes:
+    - ../:/app
+    - backend_venv:/app/.venv
+  env_file:
+    - path: ../.env
+      required: false
+  networks:
+    - beacon-local-network
+  restart: unless-stopped
+
+x-app-env: &app-env
+  POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-beacon}:${POSTGRES_PASSWORD:-beacon}@postgres:5432/${POSTGRES_DB:-beacon}
+  REDIS_DSN: redis://redis:6379/0
+  KAFKA_BOOTSTRAP_SERVERS: kafka-1:19092,kafka-2:19092,kafka-3:19092
+  KAFKA_TOPIC_EVENTS: telemetry.events
+  KAFKA_TOPIC_DLQ: telemetry.dlq
+  CLICKHOUSE_HOST: clickhouse
+  CLICKHOUSE_PORT: "8123"
+  CLICKHOUSE_DB: ${CLICKHOUSE_DB:-beacon}
+  CLICKHOUSE_USER: ${CLICKHOUSE_USER:-beacon}
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-beacon}
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_ACCESS_KEY: ${S3_ROOT_USER:-minioadmin}
+  S3_SECRET_KEY: ${S3_ROOT_PASSWORD:-minioadmin}
+  S3_BUCKET: ${S3_BUCKET:-beacon-artifacts}
+
+x-app-deps: &app-deps
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+  minio:
+    condition: service_healthy
+  kafka-1:
+    condition: service_healthy
+  kafka-2:
+    condition: service_healthy
+  kafka-3:
+    condition: service_healthy
+  clickhouse:
+    condition: service_healthy
+
+services:
+  postgres:
+    container_name: beacon-postgres-local
+    image: postgres:18-alpine3.22
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-beacon}
+      POSTGRES_USER: ${POSTGRES_USER:-beacon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-beacon}
+    ports:
+      - "127.0.0.1:${EXTERNAL_POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-beacon} -d ${POSTGRES_DB:-beacon}"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    networks:
+      - beacon-local-network
+    restart: unless-stopped
+
+  redis:
+    container_name: beacon-redis-local
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:${EXTERNAL_REDIS_PORT:-16379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - beacon-local-network
+    restart: unless-stopped
+
+  minio:
+    container_name: beacon-minio-local
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-19000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-19001}:9001"
+    volumes:
+      - minio_volume:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 10
+    networks:
+      - beacon-local-network
+    restart: unless-stopped
+
+  clickhouse:
+    container_name: beacon-clickhouse-local
+    image: clickhouse/clickhouse-server:25.3-alpine
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-beacon}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-beacon}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-beacon}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "127.0.0.1:${EXTERNAL_CLICKHOUSE_HTTP_PORT:-18123}:8123"
+      - "127.0.0.1:${EXTERNAL_CLICKHOUSE_NATIVE_PORT:-19009}:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+      - ./clickhouse/init:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+    networks:
+      - beacon-local-network
+    restart: unless-stopped
+
+  kafka-1:
+    image: apache/kafka:4.0.0
+    container_name: beacon-kafka-1-local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:29092:9092"
+    environment:
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:19092,CONTROLLER://0.0.0.0:19093,EXTERNAL://0.0.0.0:9092"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka-1:19092,EXTERNAL://localhost:29092"
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:19093,2@kafka-2:19093,3@kafka-3:19093"
+
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+    volumes:
+      - kafka-1-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092 > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      start_period: 30s
+      retries: 10
+    networks:
+      - beacon-local-network
+
+  kafka-2:
+    image: apache/kafka:4.0.0
+    container_name: beacon-kafka-2-local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:39092:9092"
+    environment:
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: "broker,controller"
+
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:19092,CONTROLLER://0.0.0.0:19093,EXTERNAL://0.0.0.0:9092"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka-2:19092,EXTERNAL://localhost:39092"
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:19093,2@kafka-2:19093,3@kafka-3:19093"
+
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+    volumes:
+      - kafka-2-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092 > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      start_period: 30s
+      retries: 10
+    networks:
+      - beacon-local-network
+
+  kafka-3:
+    image: apache/kafka:4.0.0
+    container_name: beacon-kafka-3-local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:49092:9092"
+    environment:
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: "broker,controller"
+
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:19092,CONTROLLER://0.0.0.0:19093,EXTERNAL://0.0.0.0:9092"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka-3:19092,EXTERNAL://localhost:49092"
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:19093,2@kafka-2:19093,3@kafka-3:19093"
+
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+    volumes:
+      - kafka-3-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server 127.0.0.1:9092 > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      start_period: 30s
+      retries: 10
+    networks:
+      - beacon-local-network
+
+  backend:
+    <<: *app-base
+    container_name: beacon-backend-local
+    ports:
+      - "127.0.0.1:${BACKEND_EXTERNAL_PORT:-18000}:${BACKEND_INTERNAL_PORT:-8000}"
+    environment:
+      <<: *app-env
+      UVICORN_RELOAD: "true"
+      SERVICE_NAME: backend
+    depends_on: *app-deps
+
+  consumer-storage:
+    <<: *app-base
+    container_name: beacon-consumer-storage-local
+    command: ["python", "-m", "beacon.consumers.storage"]
+    environment:
+      <<: *app-env
+      SERVICE_NAME: consumer-storage
+      KAFKA_CONSUMER_GROUP: storage
+      CH_BATCH_MAX_ROWS: "10000"
+      CH_BATCH_MAX_SECONDS: "1"
+    depends_on: *app-deps
+    profiles: ["workers"]
+
+  consumer-alerting:
+    <<: *app-base
+    container_name: beacon-consumer-alerting-local
+    command: ["python", "-m", "beacon.consumers.alerting"]
+    environment:
+      <<: *app-env
+      SERVICE_NAME: consumer-alerting
+      KAFKA_CONSUMER_GROUP: alerting
+    depends_on: *app-deps
+    profiles: ["workers"]
+
+  simulator:
+    <<: *app-base
+    container_name: beacon-simulator-local
+    command: ["python", "-m", "beacon.simulator"]
+    environment:
+      <<: *app-env
+      SERVICE_NAME: simulator
+      BEACON_API_URL: http://backend:8000
+      SIM_DEVICES: "${SIM_DEVICES:-1000}"
+      SIM_EVENTS_PER_DEVICE_PER_MIN: "${SIM_EPM:-6}"
+    depends_on:
+      backend:
+        condition: service_started
+    profiles: ["sim"]
+
+  prometheus:
+    container_name: beacon-prometheus-local
+    image: prom/prometheus:v3.1.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-19090}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - beacon-local-network
+    restart: unless-stopped
+    profiles: ["observability"]
+
+  grafana:
+    container_name: beacon-grafana-local
+    image: grafana/grafana:11.5.1
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-13000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks:
+      - beacon-local-network
+    restart: unless-stopped
+    profiles: ["observability"]
+
+  kafka-ui:
+    container_name: beacon-kafka-ui-local
+    image: provectuslabs/kafka-ui:latest
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "local-kraft"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka-1:19092,kafka-2:19092,kafka-3:19092"
+      KAFKA_CLUSTERS_0_READONLY: "false"
+      DYNAMIC_CONFIG_ENABLED: "true"
+    ports:
+      - "127.0.0.1:${KAFKA_UI_PORT:-18080}:8080"
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+    networks:
+      - beacon-local-network
+    restart: unless-stopped
+    profiles: ["tools"]
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_volume:
+  clickhouse_data:
+  clickhouse_logs:
+  kafka-1-data:
+  kafka-2-data:
+  kafka-3-data:
+  prometheus_data:
+  grafana_data:
+  backend_venv:
+
+networks:
+  beacon-local-network:
+    driver: bridge

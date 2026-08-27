@@ -1,0 +1,11 @@
+.env
+.env.example
+.venv
+__pycache__
+*.pyo
+*.pyd
+.git
+.gitignore
+.idea
+.editorconfig
+*.md

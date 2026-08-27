@@ -1,0 +1,275 @@
+version: '3'
+
+dotenv: ['.env']
+
+vars:
+  COMPOSE: docker compose -f infra/docker-compose.local.yml
+  ALL_PROFILES: --profile workers --profile observability --profile tools --profile sim
+  KAFKA_BOOTSTRAP: kafka-1:19092,kafka-2:19092,kafka-3:19092
+
+tasks:
+  default:
+    desc: Показать список задач
+    cmds:
+      - task --list
+    silent: true
+
+  # Первичная настройка
+  setup:
+    desc: Подготовить репозиторий к первому запуску
+    cmds:
+      - uv sync
+      - task: env:init
+      - echo "Готово. Дальше – task up"
+    silent: true
+
+  env:init:
+    desc: Создать .env из .env.example, если его ещё нет
+    cmds:
+      - cp .env.example .env
+      - echo ".env создан"
+    status:
+      - test -f .env
+    silent: true
+
+  # Жизненный цикл окружения
+  up:
+    desc: Поднять инфраструктуру и backend
+    preconditions:
+      - sh: docker info > /dev/null 2>&1
+        msg: "Docker не запущен"
+      - sh: test -f .env
+        msg: ".env отсутствует – выполните: task setup"
+    cmds:
+      - '{{.COMPOSE}} up -d --build'
+      - task: urls
+    silent: true
+
+  up:all:
+    desc: Поднять всё – консьюмеры, наблюдаемость, инструменты
+    deps: [up]
+    cmds:
+      - '{{.COMPOSE}} --profile workers --profile observability --profile tools up -d --build'
+      - task: urls:all
+    silent: true
+
+  up:obs:
+    desc: Поднять только Prometheus и Grafana
+    cmds:
+      - '{{.COMPOSE}} --profile observability up -d'
+
+  up:tools:
+    desc: Поднять kafka-ui
+    cmds:
+      - '{{.COMPOSE}} --profile tools up -d'
+
+  down:
+    desc: Остановить всё, данные сохранить
+    cmds:
+      - '{{.COMPOSE}} {{.ALL_PROFILES}} down'
+
+  clean:
+    desc: Остановить и удалить тома – все данные будут потеряны
+    prompt: Удалить все тома вместе с данными?
+    cmds:
+      - '{{.COMPOSE}} {{.ALL_PROFILES}} down -v'
+
+  restart:
+    desc: Перезапустить сервис (task restart -- backend)
+    cmds:
+      - '{{.COMPOSE}} restart {{.CLI_ARGS}}'
+
+  rebuild:
+    desc: Пересобрать образ приложения и перезапустить
+    cmds:
+      - '{{.COMPOSE}} build --no-cache backend'
+      - '{{.COMPOSE}} up -d backend'
+
+  ps:
+    desc: Статус контейнеров
+    cmds:
+      - '{{.COMPOSE}} ps'
+
+  logs:
+    desc: Логи (task logs -- backend)
+    cmds:
+      - '{{.COMPOSE}} logs -f --tail=200 {{.CLI_ARGS}}'
+
+  urls:
+    desc: Показать адреса поднятых сервисов
+    cmds:
+      - |
+        echo "backend     → http://localhost:${BACKEND_EXTERNAL_PORT:-18000}/docs"
+        echo "minio       → http://localhost:${MINIO_CONSOLE_PORT:-19001}"
+        echo "clickhouse  → http://localhost:${EXTERNAL_CLICKHOUSE_HTTP_PORT:-18123}/play"
+    silent: true
+
+  urls:all:
+    cmds:
+      - |
+        echo "grafana     → http://localhost:${GRAFANA_PORT:-13000}"
+        echo "prometheus  → http://localhost:${PROMETHEUS_PORT:-19090}"
+        echo "kafka-ui    → http://localhost:${KAFKA_UI_PORT:-18080}"
+    silent: true
+    internal: true
+
+  # Доступ внутрь контейнеров
+  sh:
+    desc: Shell в контейнере backend
+    aliases: [shell]
+    interactive: true
+    cmds:
+      - '{{.COMPOSE}} exec backend bash'
+
+  sh:pg:
+    desc: psql в Postgres
+    aliases: [psql]
+    interactive: true
+    cmds:
+      - '{{.COMPOSE}} exec postgres psql -U ${POSTGRES_USER:-beacon} -d ${POSTGRES_DB:-beacon}'
+
+  sh:redis:
+    desc: redis-cli
+    interactive: true
+    cmds:
+      - '{{.COMPOSE}} exec redis redis-cli'
+
+  sh:ch:
+    desc: clickhouse-client
+    aliases: [ch]
+    interactive: true
+    cmds:
+      - >
+        {{.COMPOSE}} exec clickhouse clickhouse-client
+        --user ${CLICKHOUSE_USER:-beacon}
+        --password ${CLICKHOUSE_PASSWORD:-beacon}
+        --database ${CLICKHOUSE_DB:-beacon}
+
+  # Kafka
+  kafka:topics:
+    desc: Список топиков
+    cmds:
+      - '{{.COMPOSE}} exec kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server {{.KAFKA_BOOTSTRAP}} --list'
+
+  kafka:describe:
+    desc: Детали топика (task kafka:describe TOPIC=telemetry.events)
+    vars:
+      TOPIC: '{{.TOPIC | default "telemetry.events"}}'
+    cmds:
+      - >
+        {{.COMPOSE}} exec kafka-1 /opt/kafka/bin/kafka-topics.sh
+        --bootstrap-server {{.KAFKA_BOOTSTRAP}} --describe --topic {{.TOPIC}}
+
+  kafka:lag:
+    desc: Лаг consumer group (task kafka:lag GROUP=alerting)
+    vars:
+      GROUP: '{{.GROUP | default "storage"}}'
+    cmds:
+      - >
+        {{.COMPOSE}} exec kafka-1 /opt/kafka/bin/kafka-consumer-groups.sh
+        --bootstrap-server {{.KAFKA_BOOTSTRAP}} --describe --group {{.GROUP}}
+
+  kafka:groups:
+    desc: Список consumer groups
+    cmds:
+      - >
+        {{.COMPOSE}} exec kafka-1 /opt/kafka/bin/kafka-consumer-groups.sh
+        --bootstrap-server {{.KAFKA_BOOTSTRAP}} --list
+
+  kafka:tail:
+    desc: Читать хвост топика (task kafka:tail TOPIC=telemetry.dlq)
+    vars:
+      TOPIC: '{{.TOPIC | default "telemetry.events"}}'
+    cmds:
+      - >
+        {{.COMPOSE}} exec kafka-1 /opt/kafka/bin/kafka-console-consumer.sh
+        --bootstrap-server {{.KAFKA_BOOTSTRAP}} --topic {{.TOPIC}} --from-beginning --max-messages 20
+
+  # База данных
+  db:migrate:
+    desc: Применить миграции Alembic
+    cmds:
+      - '{{.COMPOSE}} exec backend alembic upgrade head'
+
+  db:revision:
+    desc: Создать миграцию (task db:revision NAME="add devices")
+    requires:
+      vars: [NAME]
+    cmds:
+      - '{{.COMPOSE}} exec backend alembic revision --autogenerate -m "{{.NAME}}"'
+
+  db:downgrade:
+    desc: Откатить последнюю миграцию
+    cmds:
+      - '{{.COMPOSE}} exec backend alembic downgrade -1'
+
+  ch:init:
+    desc: Применить DDL ClickHouse из infra/clickhouse/init
+    cmds:
+      - |
+        for f in infra/clickhouse/init/*.sql; do
+          [ -e "$f" ] || { echo "DDL-файлов нет – пропускаю"; break; }
+          echo "→ $f"
+          {{.COMPOSE}} exec -T clickhouse clickhouse-client \
+            --user ${CLICKHOUSE_USER:-beacon} \
+            --password ${CLICKHOUSE_PASSWORD:-beacon} \
+            --database ${CLICKHOUSE_DB:-beacon} \
+            --multiquery < "$f"
+        done
+
+  # Разработка
+  test:
+    desc: Прогнать тесты
+    cmds:
+      - '{{.COMPOSE}} exec backend pytest -v {{.CLI_ARGS}}'
+
+  test:cov:
+    desc: Тесты с отчётом о покрытии
+    cmds:
+      - '{{.COMPOSE}} exec backend pytest --cov=beacon --cov-report=term-missing --cov-report=html'
+
+  lint:
+    desc: ruff и mypy
+    cmds:
+      - '{{.COMPOSE}} exec backend ruff check .'
+      - '{{.COMPOSE}} exec backend mypy .'
+
+  fmt:
+    desc: Отформатировать код
+    cmds:
+      - '{{.COMPOSE}} exec backend ruff format .'
+      - '{{.COMPOSE}} exec backend ruff check --fix .'
+
+  check:
+    desc: Всё перед коммитом – форматирование, линтеры, тесты
+    cmds:
+      - task: fmt
+      - task: lint
+      - task: test
+
+  # Нагрузка и симуляция
+  sim:
+    desc: Запустить симулятор устройств
+    cmds:
+      - '{{.COMPOSE}} --profile sim up -d simulator'
+      - '{{.COMPOSE}} logs -f simulator'
+
+  sim:stop:
+    desc: Остановить симулятор
+    cmds:
+      - '{{.COMPOSE}} --profile sim stop simulator'
+
+  load:
+    desc: Нагрузочный тест k6
+    preconditions:
+      - sh: command -v k6 > /dev/null
+        msg: "k6 не установлен: brew install k6 / apt install k6"
+    cmds:
+      - k6 run loadtest/ingest.js
+
+  load:report:
+    desc: Нагрузочный тест с выгрузкой сводки в JSON
+    cmds:
+      - mkdir -p loadtest/results
+      - k6 run --summary-export=loadtest/results/summary.json loadtest/ingest.js
+      - echo "Результат -> loadtest/results/summary.json"

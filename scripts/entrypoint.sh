@@ -5,7 +5,7 @@ if [ "$#" -gt 0 ]; then
     exec "$@"
 fi
 
-set -- uvicorn beacon.main:app \
+set -- uvicorn beacon.entrypoints.api:app \
     --host 0.0.0.0 \
     --port "${BACKEND_INTERNAL_PORT:-8000}"
 

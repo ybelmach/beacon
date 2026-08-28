@@ -19,6 +19,10 @@ dependencies = [
     "scalar-fastapi>=1.8.2",
     "redis>=8.0.1",
     "pyjwt[crypto]>=2.13.0",
+    "aiokafka>=0.14.0",
+    "clickhouse-connect>=1.7.2",
+    "aioboto3>=15.5.0",
+    "prometheus-client>=0.26.0",
 ]
 
 [dependency-groups]
@@ -27,7 +31,7 @@ dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "testcontainers>=4.14.0",
+    "testcontainers[clickhouse,kafka,minio,postgres,redis]>=4.14.0",
     "pre-commit>=4.6.0",
     "mypy>=2.2.0",
 ]

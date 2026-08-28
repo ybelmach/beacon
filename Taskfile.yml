@@ -232,7 +232,7 @@ tasks:
     desc: ruff и mypy
     cmds:
       - '{{.COMPOSE}} exec backend ruff check .'
-      - '{{.COMPOSE}} exec backend mypy .'
+      - '{{.COMPOSE}} exec backend mypy beacon'
 
   fmt:
     desc: Отформатировать код

@@ -4,4 +4,129 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "alembic>=1.18.1",
+    "asyncpg>=0.31.0",
+    "fastapi>=0.128.0",
+    "httpx>=0.28.1",
+    "bcrypt>=5.0.0",
+    "pydantic[email]>=2.12.5",
+    "pydantic-settings>=2.6.1",
+    "sqlalchemy>=2.0.45",
+    "structlog>=24.4.0",
+    "uvicorn[standard]>=0.32.1",
+    "greenlet>=3.3.0",
+    "scalar-fastapi>=1.8.2",
+    "redis>=8.0.1",
+    "pyjwt[crypto]>=2.13.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.13",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "testcontainers>=4.14.0",
+    "pre-commit>=4.6.0",
+    "mypy>=2.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers --strict-config"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "ignore::DeprecationWarning:testcontainers.core.waiting_utils",
+]
+
+[tool.ruff]
+line-length = 121
+indent-width = 4
+target-version = "py314"
+
+lint.select = ["ALL"]
+
+lint.ignore = [
+    "W191",
+    "E111", "E114", "E117",
+    "D206", "D300",
+    "Q000", "Q001", "Q002", "Q003",
+    "COM812", "COM819",
+    "ISC001", "ISC002",
+    "E501",
+    "D",
+    "RUF001", "RUF002", "RUF003",
+    "TC001", "TC002", "TC003",
+    "EM101", "EM102", "EM103",
+    "TRY003",
+    "FBT001", "FBT002", "FBT003",
+    "PLR0913",
+    "TD002", "TD003", "FIX002",
+    "ANN401",
+    "CPY001",
+]
+
+format.line-ending = "lf"
+
+[tool.ruff.lint.isort]
+known-first-party = ["beacon"]
+
+[tool.ruff.lint.pylint]
+max-args = 10
+max-locals = 20
+max-branches = 15
+max-returns = 8
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = [
+    "F401",
+    "F403",
+]
+"tests/*" = [
+    "S101",
+    "S105", "S106",
+    "S311",
+    "PLR2004",
+    "ARG",
+    "ANN",
+    "SLF001",
+    "INP001",
+    "DTZ",
+    "PLC0415",
+]
+"alembic/versions/*" = ["ALL"]
+"alembic/env.py" = ["E402", "ERA001", "INP001"]
+
+[tool.coverage.run]
+source = ["beacon"]
+branch = true
+omit = ["alembic/*"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.mypy]
+python_version = "3.14"
+plugins = ["pydantic.mypy"]
+strict = true
+warn_unreachable = true
+warn_redundant_casts = true
+no_implicit_reexport = true
+show_error_codes = true
+ignore_missing_imports = true
+namespace_packages = true
+explicit_package_bases = true
+exclude = ["alembic/versions/"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true

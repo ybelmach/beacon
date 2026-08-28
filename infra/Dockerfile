@@ -19,14 +19,6 @@ FROM base AS deps
 
 COPY --from=uv-bin /uv /uvx /bin/
 
-# Build-time deps for native extensions (asyncpg, bcrypt, cryptography…)
-# hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libpq-dev \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY pyproject.toml uv.lock ./
 
 ENV UV_COMPILE_BYTECODE=1 \
@@ -70,10 +62,7 @@ LABEL org.opencontainers.image.title="beacon" \
       org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.revision="${GIT_SHA}"
 
-# Runtime-only native libs — no build tools
-# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

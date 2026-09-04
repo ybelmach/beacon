@@ -45,6 +45,8 @@ ENTRYPOINT ["/app/scripts/entrypoint.sh"]
 # ─── builder: prod deps + source, produces the artifact for runtime ───────────
 FROM deps AS builder
 
+# README.md is referenced by pyproject's `readme`, so the wheel build needs it.
+COPY README.md ./
 COPY beacon/ ./beacon/
 COPY scripts/ ./scripts/
 
@@ -82,7 +84,7 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-    CMD curl -fsS "http://127.0.0.1:${BACKEND_INTERNAL_PORT:-8000}/health" || exit 1
+    CMD curl -fsS "http://127.0.0.1:${BACKEND_INTERNAL_PORT:-8000}/healthz" || exit 1
 
 EXPOSE 8000
 

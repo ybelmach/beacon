@@ -3,7 +3,7 @@ version: '3'
 dotenv: ['.env']
 
 vars:
-  COMPOSE: docker compose -f infra/docker-compose.local.yml
+  COMPOSE: docker compose --env-file .env -f infra/docker-compose.local.yml
   ALL_PROFILES: --profile workers --profile observability --profile tools --profile sim
   KAFKA_BOOTSTRAP: kafka-1:19092,kafka-2:19092,kafka-3:19092
 
@@ -229,10 +229,11 @@ tasks:
       - '{{.COMPOSE}} exec backend pytest --cov=beacon --cov-report=term-missing --cov-report=html'
 
   lint:
-    desc: ruff и mypy
+    desc: ruff, mypy и pyright
     cmds:
       - '{{.COMPOSE}} exec backend ruff check .'
       - '{{.COMPOSE}} exec backend mypy beacon'
+      - '{{.COMPOSE}} exec backend pyright'
 
   fmt:
     desc: Отформатировать код

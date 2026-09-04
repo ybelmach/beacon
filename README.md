@@ -1,1 +1,161 @@
-# beacon
+# Beacon
+
+Device telemetry ingest and analytics platform.
+
+Devices push events over HTTP; the API validates them and publishes to Kafka. Consumers
+fan out from there — one persists to ClickHouse for analytics, another evaluates alert
+rules. Postgres holds the operational state (devices, users, rules), Redis handles caching
+and rate limiting, S3/MinIO stores exported artifacts.
+
+## Stack
+
+| Concern | Choice |
+| --- | --- |
+| Runtime | Python 3.14, FastAPI, uvicorn |
+| Packaging | uv (`uv.lock` is committed and authoritative) |
+| Operational store | PostgreSQL + SQLAlchemy 2 (async) + Alembic |
+| Analytics store | ClickHouse |
+| Messaging | Kafka (3 brokers, KRaft) |
+| Cache / rate limiting | Redis |
+| Object storage | MinIO (S3 API) |
+| Observability | structlog (JSON), Prometheus, Grafana |
+| Orchestration | Docker Compose, Taskfile |
+
+## Quick start
+
+Requires Docker, [Task](https://taskfile.dev) and [uv](https://docs.astral.sh/uv/).
+
+```bash
+task setup   # uv sync + create .env from .env.example
+task up      # infrastructure + backend
+```
+
+`.env` is mandatory — both Compose and the Taskfile refuse to run without it. `task setup`
+creates it from `.env.example`; the defaults there are for local development only.
+
+| Service | URL |
+| --- | --- |
+| API docs (Scalar) | http://localhost:18000/scalar |
+| API docs (Swagger) | http://localhost:18000/docs |
+| MinIO console | http://localhost:19001 |
+| ClickHouse | http://localhost:18123/play |
+| Grafana | http://localhost:13000 |
+| Prometheus | http://localhost:19090 |
+| Kafka UI | http://localhost:18080 |
+
+Consumers, observability, tooling and the simulator sit behind Compose profiles and are
+off by default. `task up:all` starts everything; `task up:obs` (Prometheus + Grafana) and
+`task up:tools` (Kafka UI) start individual groups.
+
+## Everyday commands
+
+`task` on its own lists everything. The ones you will actually use:
+
+```bash
+task up / down / clean      # clean also drops volumes — all data is lost
+task logs -- backend        # follow one service
+task ps                     # container status
+task sh                     # shell inside the backend container
+task sh:pg / sh:redis / sh:ch  # psql, redis-cli, clickhouse-client
+
+task test                   # pytest
+task test:cov               # pytest with a coverage report
+task lint                   # ruff, mypy, pyright
+task fmt                    # ruff format
+task check                  # fmt + lint + test, run this before committing
+
+task db:migrate             # apply Alembic migrations
+task db:revision NAME="..." # autogenerate a migration
+task ch:init                # apply ClickHouse DDL
+
+task sim                    # start the device simulator
+task load                   # k6 load test
+```
+
+## Layout
+
+```
+beacon/
+  core/            config, logging, health probes, error handling, middleware
+  entrypoints/     process entry points: api, consumer_storage, consumer_alerting, simulator
+  modules/         business modules (router / service / repository / models / schemas)
+  infrastructure/  clients for postgres, redis, kafka, clickhouse, s3, notifiers
+infra/             Dockerfile, Compose, Prometheus/Grafana/ClickHouse configuration
+scripts/           container entrypoint and helpers
+tests/
+```
+
+Each module under `beacon/modules/` owns one slice of the domain and follows the same
+router → service → repository split. `core` and `infrastructure` never import from
+`modules`.
+
+## Configuration
+
+Every setting lives in `beacon/core/config.py` as a field on `Settings` and is read from
+the environment. `.env.example` is the annotated reference; `Settings` validates on
+startup, so a bad `LOG_LEVEL` or a `CORS_ALLOW_CREDENTIALS=true` combined with `*`
+fails the process immediately rather than at the first request.
+
+`BEACON_ENV_FILE` overrides which dotenv is read. The test suite points it at
+`tests/.env.test` so a developer's local `.env` can never change how tests behave; real
+environment variables still take precedence over the file, so CI can override any single
+value.
+
+Two flags are worth calling out:
+
+- `DEBUG_MODE` — verbose local mode: SQL echo, callsite info in logs, a per-request
+  "started" line. It deliberately does **not** change what a client sees; error responses
+  have the same shape in every environment.
+- `LOG_FORMAT` — `json` for anything a log collector reads, `console` for a readable
+  local terminal.
+
+## Operational endpoints
+
+| Path | Purpose |
+| --- | --- |
+| `GET /healthz` | Liveness. Answers as long as the process is up; never touches a dependency. |
+| `GET /readyz` | Readiness. Probes Postgres and Redis concurrently, each bounded by `READINESS_TIMEOUT_SECONDS`. Returns 503 with a per-check breakdown when anything is not `ok`. |
+
+Both are excluded from the OpenAPI schema and from the access log.
+
+## Error format
+
+Every error response is [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807) problem detail
+with the `application/problem+json` media type:
+
+```json
+{
+  "type": "http://localhost:18000/problems/not-found",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "Device 7 does not exist",
+  "instance": "/api/v1/devices/7",
+  "request_id": "0f9c1e2a-..."
+}
+```
+
+Raise a subclass of `beacon.core.exceptions.AppError` from anywhere in a module; the
+class declares its own `status_code`, `slug` and `default_detail`, and that is the single
+source of truth — the status→slug index used for bare `HTTPException`s is derived from
+the class hierarchy, not maintained separately.
+
+Validation failures add an `errors` array. Unhandled exceptions become a generic 500 with
+no internals leaked, logged once with a structured traceback.
+
+## Logging
+
+structlog, JSON to stdout, one line per event. Stdlib loggers (uvicorn, SQLAlchemy,
+aiokafka) are routed through the same pipeline, so the output is uniform. Every line
+carries `service` and `env`; every line emitted during a request also carries
+`request_id`, which comes from the inbound `X-Request-ID` header when present and is
+echoed back on the response.
+
+## Tests
+
+```bash
+task test        # inside the backend container
+uv run pytest    # on the host
+```
+
+Integration tests use [testcontainers](https://testcontainers-python.readthedocs.io/),
+so Docker must be running. Settings are pinned by `tests/.env.test`.

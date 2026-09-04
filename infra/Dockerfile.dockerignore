@@ -9,3 +9,9 @@ __pycache__
 .idea
 .editorconfig
 *.md
+!README.md
+.mypy_cache
+.ruff_cache
+.pytest_cache
+htmlcov
+.task

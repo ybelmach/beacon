@@ -11,7 +11,7 @@ x-app-base: &app-base
     - backend_venv:/app/.venv
   env_file:
     - path: ../.env
-      required: false
+      required: true
   networks:
     - beacon-local-network
   restart: unless-stopped
@@ -20,17 +20,11 @@ x-app-env: &app-env
   POSTGRES_DSN: postgresql+asyncpg://${POSTGRES_USER:-beacon}:${POSTGRES_PASSWORD:-beacon}@postgres:5432/${POSTGRES_DB:-beacon}
   REDIS_DSN: redis://redis:6379/0
   KAFKA_BOOTSTRAP_SERVERS: kafka-1:19092,kafka-2:19092,kafka-3:19092
-  KAFKA_TOPIC_EVENTS: telemetry.events
-  KAFKA_TOPIC_DLQ: telemetry.dlq
   CLICKHOUSE_HOST: clickhouse
   CLICKHOUSE_PORT: "8123"
-  CLICKHOUSE_DB: ${CLICKHOUSE_DB:-beacon}
-  CLICKHOUSE_USER: ${CLICKHOUSE_USER:-beacon}
-  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-beacon}
   S3_ENDPOINT_URL: http://minio:9000
   S3_ACCESS_KEY: ${S3_ROOT_USER:-minioadmin}
   S3_SECRET_KEY: ${S3_ROOT_PASSWORD:-minioadmin}
-  S3_BUCKET: ${S3_BUCKET:-beacon-artifacts}
 
 x-app-deps: &app-deps
   postgres:
@@ -287,7 +281,7 @@ services:
   consumer-storage:
     <<: *app-base
     container_name: beacon-consumer-storage-local
-    command: ["python", "-m", "beacon.consumers.storage"]
+    command: ["python", "-m", "beacon.entrypoints.consumer_storage"]
     environment:
       <<: *app-env
       SERVICE_NAME: consumer-storage
@@ -300,7 +294,7 @@ services:
   consumer-alerting:
     <<: *app-base
     container_name: beacon-consumer-alerting-local
-    command: ["python", "-m", "beacon.consumers.alerting"]
+    command: ["python", "-m", "beacon.entrypoints.consumer_alerting"]
     environment:
       <<: *app-env
       SERVICE_NAME: consumer-alerting
@@ -311,7 +305,7 @@ services:
   simulator:
     <<: *app-base
     container_name: beacon-simulator-local
-    command: ["python", "-m", "beacon.simulator"]
+    command: ["python", "-m", "beacon.entrypoints.simulator"]
     environment:
       <<: *app-env
       SERVICE_NAME: simulator

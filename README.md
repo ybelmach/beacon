@@ -167,6 +167,9 @@ carries `service` and `env`; every line emitted during a request also carries
 echoed back on the response. An inbound id is trusted only if it is 1–128 characters of
 `A-Z a-z 0-9 . _ : -`; anything else is silently replaced with a fresh UUID.
 
+The access log records method, path, status and duration – never the query string,
+which routinely carries tokens.
+
 ## Tests
 
 ```bash

@@ -164,7 +164,8 @@ structlog, JSON to stdout, one line per event. Stdlib loggers (uvicorn, SQLAlche
 aiokafka) are routed through the same pipeline, so the output is uniform. Every line
 carries `service` and `env`; every line emitted during a request also carries
 `request_id`, which comes from the inbound `X-Request-ID` header when present and is
-echoed back on the response.
+echoed back on the response. An inbound id is trusted only if it is 1–128 characters of
+`A-Z a-z 0-9 . _ : -`; anything else is silently replaced with a fresh UUID.
 
 ## Tests
 

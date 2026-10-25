@@ -22,16 +22,16 @@ x-app-env: &app-env
   KAFKA_BOOTSTRAP_SERVERS: kafka-1:19092,kafka-2:19092,kafka-3:19092
   CLICKHOUSE_HOST: clickhouse
   CLICKHOUSE_PORT: "8123"
-  S3_ENDPOINT_URL: http://minio:9000
-  S3_ACCESS_KEY: ${S3_ROOT_USER:-minioadmin}
-  S3_SECRET_KEY: ${S3_ROOT_PASSWORD:-minioadmin}
+  S3_ENDPOINT_URL: http://rustfs:9000
+  S3_ACCESS_KEY: ${S3_ROOT_USER:-rustfsadmin}
+  S3_SECRET_KEY: ${S3_ROOT_PASSWORD:-rustfsadmin}
 
 x-app-deps: &app-deps
   postgres:
     condition: service_healthy
   redis:
     condition: service_healthy
-  minio:
+  rustfs:
     condition: service_healthy
   kafka-1:
     condition: service_healthy
@@ -81,20 +81,22 @@ services:
       - beacon-local-network
     restart: unless-stopped
 
-  minio:
-    container_name: beacon-minio-local
-    image: minio/minio
-    command: server /data --console-address ":9001"
+  rustfs:
+    container_name: beacon-rustfs-local
+    image: rustfs/rustfs:1.0.1
     environment:
-      MINIO_ROOT_USER: ${S3_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${S3_ROOT_PASSWORD:-minioadmin}
+      RUSTFS_ACCESS_KEY: ${S3_ROOT_USER:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${S3_ROOT_PASSWORD:-rustfsadmin}
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_CONSOLE_ENABLE: "true"
     ports:
-      - "127.0.0.1:${MINIO_API_PORT:-19000}:9000"
-      - "127.0.0.1:${MINIO_CONSOLE_PORT:-19001}:9001"
+      - "127.0.0.1:${S3_API_PORT:-19000}:9000"
+      - "127.0.0.1:${S3_CONSOLE_PORT:-19001}:9001"
     volumes:
-      - minio_volume:/data
+      - rustfs_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
       interval: 10s
       timeout: 5s
       start_period: 10s
@@ -381,7 +383,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  minio_volume:
+  rustfs_data:
   clickhouse_data:
   clickhouse_logs:
   kafka-1-data:

@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     redis_dsn: str
     redis_socket_timeout_seconds: float = 1.0
 
-    # S3 / MinIO
+    # S3 (RustFS locally)
     s3_endpoint_url: str
     s3_access_key: str
     s3_secret_key: str

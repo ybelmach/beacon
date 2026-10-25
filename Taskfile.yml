@@ -100,7 +100,7 @@ tasks:
     cmds:
       - |
         echo "backend     → http://localhost:${BACKEND_EXTERNAL_PORT:-18000}/docs"
-        echo "minio       → http://localhost:${MINIO_CONSOLE_PORT:-19001}"
+        echo "rustfs      → http://localhost:${S3_CONSOLE_PORT:-19001}"
         echo "clickhouse  → http://localhost:${EXTERNAL_CLICKHOUSE_HTTP_PORT:-18123}/play"
     silent: true
 

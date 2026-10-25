@@ -5,7 +5,7 @@ Device telemetry ingest and analytics platform.
 Devices push events over HTTP; the API validates them and publishes to Kafka. Consumers
 fan out from there — one persists to ClickHouse for analytics, another evaluates alert
 rules. Postgres holds the operational state (devices, users, rules), Redis handles caching
-and rate limiting, S3/MinIO stores exported artifacts.
+and rate limiting, S3-compatible storage (RustFS) holds exported artifacts.
 
 ## Stack
 
@@ -17,7 +17,7 @@ and rate limiting, S3/MinIO stores exported artifacts.
 | Analytics store | ClickHouse |
 | Messaging | Kafka (3 brokers, KRaft) |
 | Cache / rate limiting | Redis |
-| Object storage | MinIO (S3 API) |
+| Object storage | RustFS (S3 API) |
 | Observability | structlog (JSON), Prometheus, Grafana |
 | Orchestration | Docker Compose, Taskfile |
 
@@ -37,7 +37,7 @@ creates it from `.env.example`; the defaults there are for local development onl
 | --- | --- |
 | API docs (Scalar) | http://localhost:18000/scalar |
 | API docs (Swagger) | http://localhost:18000/docs |
-| MinIO console | http://localhost:19001 |
+| RustFS console | http://localhost:19001 |
 | ClickHouse | http://localhost:18123/play |
 | Grafana | http://localhost:13000 |
 | Prometheus | http://localhost:19090 |

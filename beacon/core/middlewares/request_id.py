@@ -1,3 +1,4 @@
+import re
 import uuid
 
 import structlog
@@ -5,6 +6,14 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 REQUEST_ID_HEADER = "X-Request-ID"
+
+_VALID_REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+
+
+def resolve_request_id(inbound: str | None) -> str:
+    if inbound is not None and _VALID_REQUEST_ID.fullmatch(inbound):
+        return inbound
+    return str(uuid.uuid4())
 
 
 class RequestIDMiddleware:
@@ -18,7 +27,7 @@ class RequestIDMiddleware:
             await self.app(scope, receive, send)
             return
 
-        request_id = Headers(scope=scope).get(REQUEST_ID_HEADER) or str(uuid.uuid4())
+        request_id = resolve_request_id(Headers(scope=scope).get(REQUEST_ID_HEADER))
 
         scope.setdefault("state", {})["request_id"] = request_id
 

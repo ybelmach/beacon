@@ -38,10 +38,11 @@ dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "testcontainers[clickhouse,kafka,minio,postgres,redis]>=4.14.0",
+    "testcontainers[clickhouse,kafka,postgres,redis]>=4.14.0",
     "pre-commit>=4.6.0",
     "mypy>=2.2.0",
-    "pyright>=1.1.408",
+    "pyright>=1.1.414",
+    "httpx2>=2.16.0",
 ]
 
 [tool.pytest.ini_options]

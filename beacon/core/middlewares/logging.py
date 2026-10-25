@@ -22,11 +22,9 @@ class AccessLogMiddleware:
             return
 
         client = scope.get("client")
-        query = scope.get("query_string", b"").decode("latin-1")
         log = logger.bind(
             method=scope["method"],
             path=scope["path"],
-            query=query or None,
             client_ip=client[0] if client else None,
         )
 

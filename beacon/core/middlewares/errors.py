@@ -9,13 +9,7 @@ logger = get_logger(__name__)
 
 
 class ProblemDetailsMiddleware:
-    """Last line of defence: turns an unhandled exception into an RFC 7807 response.
-
-    This has to be a middleware rather than an `Exception` handler. Starlette routes
-    that handler to ServerErrorMiddleware, which always re-raises after responding so
-    the server can log the crash – producing a second, unstructured traceback for every
-    500. Terminating the exception here keeps exactly one structured record of it.
-    """
+    """Last line of defence: turns an unhandled exception into an RFC 9457 response."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app

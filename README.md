@@ -5,7 +5,7 @@ Device telemetry ingest and analytics platform.
 Devices push events over HTTP; the API validates them and publishes to Kafka. Consumers
 fan out from there — one persists to ClickHouse for analytics, another evaluates alert
 rules. Postgres holds the operational state (devices, users, rules), Redis handles caching
-and rate limiting, S3/MinIO stores exported artifacts.
+and rate limiting, S3-compatible storage (RustFS) holds exported artifacts.
 
 ## Stack
 
@@ -17,7 +17,7 @@ and rate limiting, S3/MinIO stores exported artifacts.
 | Analytics store | ClickHouse |
 | Messaging | Kafka (3 brokers, KRaft) |
 | Cache / rate limiting | Redis |
-| Object storage | MinIO (S3 API) |
+| Object storage | RustFS (S3 API) |
 | Observability | structlog (JSON), Prometheus, Grafana |
 | Orchestration | Docker Compose, Taskfile |
 
@@ -37,7 +37,7 @@ creates it from `.env.example`; the defaults there are for local development onl
 | --- | --- |
 | API docs (Scalar) | http://localhost:18000/scalar |
 | API docs (Swagger) | http://localhost:18000/docs |
-| MinIO console | http://localhost:19001 |
+| RustFS console | http://localhost:19001 |
 | ClickHouse | http://localhost:18123/play |
 | Grafana | http://localhost:13000 |
 | Prometheus | http://localhost:19090 |
@@ -58,9 +58,9 @@ task ps                     # container status
 task sh                     # shell inside the backend container
 task sh:pg / sh:redis / sh:ch  # psql, redis-cli, clickhouse-client
 
-task test                   # pytest
+task test                   # pytest, on the host
 task test:cov               # pytest with a coverage report
-task lint                   # ruff, mypy, pyright
+task lint                   # ruff, mypy, pyright, on the host
 task fmt                    # ruff format
 task check                  # fmt + lint + test, run this before committing
 
@@ -77,7 +77,7 @@ task load                   # k6 load test
 ```
 beacon/
   core/            config, logging, health probes, error handling, middleware
-  entrypoints/     process entry points: api, consumer_storage, consumer_alerting, simulator
+  entrypoints/     process entry points and their lifespans: api, consumer_storage, consumer_alerting, simulator
   modules/         business modules (router / service / repository / models / schemas)
   infrastructure/  clients for postgres, redis, kafka, clickhouse, s3, notifiers
 infra/             Dockerfile, Compose, Prometheus/Grafana/ClickHouse configuration
@@ -88,6 +88,18 @@ tests/
 Each module under `beacon/modules/` owns one slice of the domain and follows the same
 router → service → repository split. `core` and `infrastructure` never import from
 `modules`.
+
+Dependencies point one way: `entrypoints → modules → infrastructure → core`. `core`
+knows nothing about Postgres, Redis or any other backend.
+
+Every process builds its clients with `beacon.infrastructure.resources.build_resources`,
+which yields a `Resources` bundle and tears it down in reverse order. The API's lifespan
+stores it on `app.state.resources` and registers the readiness checks it cares about.
+Routes reach it through `beacon.infrastructure.dependencies` (`SessionDep`, `RedisDep`).
+
+`SessionDep` opens one session per request and never commits. The service owns the
+transaction (`await session.commit()` or `async with session.begin()`); repositories only
+`add`, `flush` and query. Anything left uncommitted is rolled back when the session closes.
 
 ## Configuration
 
@@ -100,6 +112,10 @@ fails the process immediately rather than at the first request.
 `tests/.env.test` so a developer's local `.env` can never change how tests behave; real
 environment variables still take precedence over the file, so CI can override any single
 value.
+
+`SECRET_KEY` may be any value while `ENVIRONMENT` is `local` or `test`. In every other
+environment (`dev`, `staging`, `production`) startup fails unless it is at least 32
+characters and not a known placeholder – generate one with `openssl rand -hex 32`.
 
 Two flags are worth calling out:
 
@@ -120,7 +136,7 @@ Both are excluded from the OpenAPI schema and from the access log.
 
 ## Error format
 
-Every error response is [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807) problem detail
+Every error response is [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem detail
 with the `application/problem+json` media type:
 
 ```json
@@ -148,14 +164,31 @@ structlog, JSON to stdout, one line per event. Stdlib loggers (uvicorn, SQLAlche
 aiokafka) are routed through the same pipeline, so the output is uniform. Every line
 carries `service` and `env`; every line emitted during a request also carries
 `request_id`, which comes from the inbound `X-Request-ID` header when present and is
-echoed back on the response.
+echoed back on the response. An inbound id is trusted only if it is 1–128 characters of
+`A-Z a-z 0-9 . _ : -`; anything else is silently replaced with a fresh UUID.
+
+The access log records method, path, status and duration – never the query string,
+which routinely carries tokens.
 
 ## Tests
 
 ```bash
-task test        # inside the backend container
-uv run pytest    # on the host
+task test        # same as: uv run pytest -v
 ```
 
 Integration tests use [testcontainers](https://testcontainers-python.readthedocs.io/),
-so Docker must be running. Settings are pinned by `tests/.env.test`.
+so Docker must be running. Settings are pinned by `tests/.env.test`; the Taskfile
+deliberately does not load `.env` for test tasks, so local values cannot leak in.
+
+## CI
+
+`.github/workflows/ci.yml` and `.gitlab-ci.yml` run the same pipeline:
+
+| Job | When | What |
+| --- | --- | --- |
+| `lint` | PRs/MRs into `develop`/`main`, pushes to them | `pre-commit run --all-files` (ruff, mypy, pyright, hygiene hooks) |
+| `test` | same | `pytest` with coverage and a JUnit report |
+| `build` | pushes to `develop`/`main` | production image, pushed to GHCR / the GitLab registry, tagged with the short SHA and the branch |
+
+Neither needs secrets: tests read `tests/.env.test`. GitHub Actions are pinned to
+commit SHAs.

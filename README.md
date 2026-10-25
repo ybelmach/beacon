@@ -58,9 +58,9 @@ task ps                     # container status
 task sh                     # shell inside the backend container
 task sh:pg / sh:redis / sh:ch  # psql, redis-cli, clickhouse-client
 
-task test                   # pytest
+task test                   # pytest, on the host
 task test:cov               # pytest with a coverage report
-task lint                   # ruff, mypy, pyright
+task lint                   # ruff, mypy, pyright, on the host
 task fmt                    # ruff format
 task check                  # fmt + lint + test, run this before committing
 
@@ -173,9 +173,9 @@ which routinely carries tokens.
 ## Tests
 
 ```bash
-task test        # inside the backend container
-uv run pytest    # on the host
+task test        # same as: uv run pytest -v
 ```
 
 Integration tests use [testcontainers](https://testcontainers-python.readthedocs.io/),
-so Docker must be running. Settings are pinned by `tests/.env.test`.
+so Docker must be running. Settings are pinned by `tests/.env.test`; the Taskfile
+deliberately does not load `.env` for test tasks, so local values cannot leak in.

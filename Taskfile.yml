@@ -1,7 +1,5 @@
 version: '3'
 
-dotenv: ['.env']
-
 vars:
   COMPOSE: docker compose --env-file .env -f infra/docker-compose.local.yml
   ALL_PROFILES: --profile workers --profile observability --profile tools --profile sim
@@ -96,6 +94,7 @@ tasks:
       - '{{.COMPOSE}} logs -f --tail=200 {{.CLI_ARGS}}'
 
   urls:
+    dotenv: ['.env']
     desc: Показать адреса поднятых сервисов
     cmds:
       - |
@@ -105,6 +104,7 @@ tasks:
     silent: true
 
   urls:all:
+    dotenv: ['.env']
     cmds:
       - |
         echo "grafana     → http://localhost:${GRAFANA_PORT:-13000}"
@@ -122,6 +122,7 @@ tasks:
       - '{{.COMPOSE}} exec backend bash'
 
   sh:pg:
+    dotenv: ['.env']
     desc: psql в Postgres
     aliases: [psql]
     interactive: true
@@ -135,6 +136,7 @@ tasks:
       - '{{.COMPOSE}} exec redis redis-cli'
 
   sh:ch:
+    dotenv: ['.env']
     desc: clickhouse-client
     aliases: [ch]
     interactive: true
@@ -204,6 +206,7 @@ tasks:
       - '{{.COMPOSE}} exec backend alembic downgrade -1'
 
   ch:init:
+    dotenv: ['.env']
     desc: Применить DDL ClickHouse из infra/clickhouse/init
     cmds:
       - |
@@ -221,25 +224,26 @@ tasks:
   test:
     desc: Прогнать тесты
     cmds:
-      - '{{.COMPOSE}} exec backend pytest -v {{.CLI_ARGS}}'
+      - uv run pytest -v {{.CLI_ARGS}}
 
   test:cov:
     desc: Тесты с отчётом о покрытии
     cmds:
-      - '{{.COMPOSE}} exec backend pytest --cov=beacon --cov-report=term-missing --cov-report=html'
+      - uv run pytest --cov --cov-report=term-missing --cov-report=html {{.CLI_ARGS}}
 
   lint:
     desc: ruff, mypy и pyright
     cmds:
-      - '{{.COMPOSE}} exec backend ruff check .'
-      - '{{.COMPOSE}} exec backend mypy beacon'
-      - '{{.COMPOSE}} exec backend pyright'
+      - uv run ruff check .
+      - uv run ruff format --check .
+      - uv run mypy beacon tests
+      - uv run pyright
 
   fmt:
     desc: Отформатировать код
     cmds:
-      - '{{.COMPOSE}} exec backend ruff format .'
-      - '{{.COMPOSE}} exec backend ruff check --fix .'
+      - uv run ruff format .
+      - uv run ruff check --fix .
 
   check:
     desc: Всё перед коммитом – форматирование, линтеры, тесты

@@ -179,3 +179,16 @@ task test        # same as: uv run pytest -v
 Integration tests use [testcontainers](https://testcontainers-python.readthedocs.io/),
 so Docker must be running. Settings are pinned by `tests/.env.test`; the Taskfile
 deliberately does not load `.env` for test tasks, so local values cannot leak in.
+
+## CI
+
+`.github/workflows/ci.yml` and `.gitlab-ci.yml` run the same pipeline:
+
+| Job | When | What |
+| --- | --- | --- |
+| `lint` | PRs/MRs into `develop`/`main`, pushes to them | `pre-commit run --all-files` (ruff, mypy, pyright, hygiene hooks) |
+| `test` | same | `pytest` with coverage and a JUnit report |
+| `build` | pushes to `develop`/`main` | production image, pushed to GHCR / the GitLab registry, tagged with the short SHA and the branch |
+
+Neither needs secrets: tests read `tests/.env.test`. GitHub Actions are pinned to
+commit SHAs.

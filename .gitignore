@@ -10,3 +10,20 @@ wheels/
 .env
 idea.md
 .idea/
+
+# Test and coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+report.xml
+
+# CI caches
+.uv-cache/
+.pre-commit-cache/
+
+# Load test output
+loadtest/results/
+
+# OS
+.DS_Store

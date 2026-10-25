@@ -1,0 +1,102 @@
+variables:
+  UV_IMAGE: "ghcr.io/astral-sh/uv:python3.14-bookworm-slim"
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
+  UV_LINK_MODE: copy
+  PRE_COMMIT_HOME: "$CI_PROJECT_DIR/.pre-commit-cache"
+
+stages:
+  - test
+  - build
+
+.quality-gate-rules: &quality_gate_rules
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "develop"'
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+  - if: '$CI_COMMIT_BRANCH == "develop"'
+  - if: '$CI_COMMIT_BRANCH == "main"'
+
+.uv-cache: &uv_cache
+  key:
+    files:
+      - uv.lock
+  paths:
+    - .uv-cache
+
+lint:
+  stage: test
+  image: $UV_IMAGE
+  cache:
+    - *uv_cache
+    - key:
+        files:
+          - .pre-commit-config.yaml
+      paths:
+        - .pre-commit-cache
+  before_script:
+    - apt-get update -qq && apt-get install -y --no-install-recommends git >/dev/null
+  script:
+    - uv sync --frozen
+    - uv run pre-commit run --all-files --show-diff-on-failure
+  rules: *quality_gate_rules
+
+test:
+  stage: test
+  image: $UV_IMAGE
+  services:
+    - docker:24.0.5-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    TESTCONTAINERS_RYUK_DISABLED: "true"
+  tags:
+    - docker
+    - dind
+  cache:
+    - *uv_cache
+  before_script:
+    - apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates >/dev/null
+    - >
+      curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz
+      | tar xz --strip-components=1 -C /usr/local/bin docker/docker
+  script:
+    - uv sync --frozen
+    - uv run pytest --cov --cov-report=term-missing --cov-report=xml:coverage.xml --junitxml=report.xml
+  coverage: '/^TOTAL.*\s+(\d+(?:\.\d+)?)%/'
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+  rules: *quality_gate_rules
+
+build:
+  stage: build
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_TLS_VERIFY: 1
+    DOCKER_CERT_PATH: "/certs/client"
+  tags:
+    - docker
+    - dind
+  script:
+    - docker info
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - >
+      docker build
+      -f infra/Dockerfile
+      --target production
+      --build-arg APP_VERSION="$CI_COMMIT_REF_NAME"
+      --build-arg GIT_SHA="$CI_COMMIT_SHORT_SHA"
+      -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+      -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG"
+      .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'

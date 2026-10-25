@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 
 
 async def handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    """Handle FastAPI request validation errors in RFC 7807 format."""
+    """Handle FastAPI request validation errors in RFC 9457 format."""
     errors = exc.errors()
     error_details = [
         {
@@ -42,7 +42,7 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
 
 
 async def handle_http_exception(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-    """Handle HTTP exceptions raised outside the domain hierarchy in RFC 7807 format."""
+    """Handle HTTP exceptions raised outside the domain hierarchy in RFC 9457 format."""
     detail = exc.detail or title_for_status(exc.status_code)
 
     logger.warning(
@@ -57,14 +57,12 @@ async def handle_http_exception(request: Request, exc: StarletteHTTPException) -
         status_code=exc.status_code,
         detail=detail,
         slug=slug_for_status(exc.status_code),
-        # `WWW-Authenticate` on 401 and `Retry-After` on 429 are part of the protocol,
-        # not decoration – dropping them makes the response non-conforming.
         headers=exc.headers,
     )
 
 
 async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
-    """Map domain errors to RFC 7807 responses using the mapping each class declares."""
+    """Map domain errors to RFC 9457 responses using the mapping each class declares."""
     logger.warning(
         "domain_exception",
         exception_type=type(exc).__name__,
@@ -82,12 +80,7 @@ async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """Single place to wire up every exception handler; called once from create_app().
-
-    There is deliberately no handler for bare `Exception`: Starlette routes that one to
-    ServerErrorMiddleware, which re-raises after responding and so costs a duplicate
-    traceback from uvicorn. ProblemDetailsMiddleware terminates those instead.
-    """
+    """Single place to wire up every exception handler; called once from create_app()."""
     app.add_exception_handler(RequestValidationError, handle_validation_error)  # type: ignore[arg-type]
     app.add_exception_handler(StarletteHTTPException, handle_http_exception)  # type: ignore[arg-type]
     app.add_exception_handler(AppError, handle_app_error)  # type: ignore[arg-type]

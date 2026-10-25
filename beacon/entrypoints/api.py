@@ -58,9 +58,6 @@ def create_app() -> FastAPI:
     settings = get_settings()
     setup_logging()
 
-    # `debug` is deliberately not wired to settings.debug_mode: it makes Starlette
-    # answer 500s with a plain-text traceback instead of calling our handlers, so the
-    # error contract would silently differ between local and production.
     app = FastAPI(
         title=settings.app_name,
         lifespan=lifespan,

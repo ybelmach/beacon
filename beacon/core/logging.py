@@ -27,10 +27,7 @@ def _add_service_context(
     _method_name: str,
     event_dict: EventDict,
 ) -> EventDict:
-    """Stamp every line with who emitted it – the same code runs as api, consumer and simulator.
-
-    Bound to its values once via `partial` at setup: this runs on every single record.
-    """
+    """Stamp every line with who emitted it – the same code runs as api, consumer and simulator."""
     event_dict.setdefault("service", service)
     event_dict.setdefault("env", env)
     return event_dict

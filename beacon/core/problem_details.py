@@ -21,12 +21,7 @@ def _app_error_classes() -> Iterator[type[AppError]]:
 
 
 def slug_for_status(status_code: int) -> str | None:
-    """Reverse-index the exception hierarchy: each class stays the single source of its own slug.
-
-    Used for `HTTPException`s raised outside the domain hierarchy, which carry a status
-    code but no slug. Walked on demand rather than cached, so subclasses declared in
-    modules imported later are picked up too.
-    """
+    """Reverse-index the exception hierarchy: each class stays the single source of its own slug."""
     for cls in _app_error_classes():
         if cls.status_code == status_code:
             return cls.slug
@@ -54,7 +49,7 @@ def create_problem_response(
     extensions: Mapping[str, object] | None = None,
     headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
-    """Create an RFC 7807 Problem Details response."""
+    """Create an RFC 9457 Problem Details response."""
     content: dict[str, object] = {
         "type": problem_type(slug),
         "title": title_for_status(status_code),

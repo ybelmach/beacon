@@ -136,7 +136,7 @@ Both are excluded from the OpenAPI schema and from the access log.
 
 ## Error format
 
-Every error response is [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807) problem detail
+Every error response is [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem detail
 with the `application/problem+json` media type:
 
 ```json

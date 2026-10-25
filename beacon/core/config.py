@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import field_validator, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -12,6 +12,12 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _ENV_FILE_VAR = "BEACON_ENV_FILE"
 
 _VALID_LOG_LEVELS = frozenset(logging.getLevelNamesMapping())
+
+_INSECURE_KEY_ENVIRONMENTS = frozenset({"local", "test"})
+_MIN_SECRET_KEY_LENGTH = 32
+_PLACEHOLDER_SECRET_KEYS = frozenset({"change-me", "changeme", "secret", "test-secret-key"})
+
+Environment = Literal["local", "test", "dev", "staging", "production"]
 
 
 def _env_file() -> Path:
@@ -30,7 +36,7 @@ class Settings(BaseSettings):
     # App
     app_name: str = "beacon-backend"
     service_name: str = "backend"
-    environment: str = "local"
+    environment: Environment = "local"
     base_url: str = "http://localhost:8000"
     # Verbose local mode: SQL echo and a per-request "started" line. Never affects
     # what a client sees – error bodies are the same shape in every environment.
@@ -47,7 +53,7 @@ class Settings(BaseSettings):
     enable_docs: bool = False
 
     # Security
-    secret_key: str
+    secret_key: SecretStr
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
@@ -101,6 +107,19 @@ class Settings(BaseSettings):
     def _validate_cors(self) -> Self:
         if self.cors_allow_credentials and "*" in self.cors_origins:
             raise ValueError("cors_allow_credentials=true requires an explicit origin list, not '*'")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_secret_key(self) -> Self:
+        if self.environment in _INSECURE_KEY_ENVIRONMENTS:
+            return self
+        key = self.secret_key.get_secret_value()
+        if key.lower() in _PLACEHOLDER_SECRET_KEYS or len(key) < _MIN_SECRET_KEY_LENGTH:
+            raise ValueError(
+                f"secret_key must be a random value of at least {_MIN_SECRET_KEY_LENGTH} characters "
+                f"outside {sorted(_INSECURE_KEY_ENVIRONMENTS)} (environment={self.environment!r}); "
+                "generate one with: openssl rand -hex 32"
+            )
         return self
 
     @model_validator(mode="after")

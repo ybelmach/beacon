@@ -113,6 +113,10 @@ fails the process immediately rather than at the first request.
 environment variables still take precedence over the file, so CI can override any single
 value.
 
+`SECRET_KEY` may be any value while `ENVIRONMENT` is `local` or `test`. In every other
+environment (`dev`, `staging`, `production`) startup fails unless it is at least 32
+characters and not a known placeholder – generate one with `openssl rand -hex 32`.
+
 Two flags are worth calling out:
 
 - `DEBUG_MODE` — verbose local mode: SQL echo, callsite info in logs, a per-request

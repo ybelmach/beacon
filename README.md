@@ -77,7 +77,7 @@ task load                   # k6 load test
 ```
 beacon/
   core/            config, logging, health probes, error handling, middleware
-  entrypoints/     process entry points: api, consumer_storage, consumer_alerting, simulator
+  entrypoints/     process entry points and their lifespans: api, consumer_storage, consumer_alerting, simulator
   modules/         business modules (router / service / repository / models / schemas)
   infrastructure/  clients for postgres, redis, kafka, clickhouse, s3, notifiers
 infra/             Dockerfile, Compose, Prometheus/Grafana/ClickHouse configuration
@@ -88,6 +88,18 @@ tests/
 Each module under `beacon/modules/` owns one slice of the domain and follows the same
 router → service → repository split. `core` and `infrastructure` never import from
 `modules`.
+
+Dependencies point one way: `entrypoints → modules → infrastructure → core`. `core`
+knows nothing about Postgres, Redis or any other backend.
+
+Every process builds its clients with `beacon.infrastructure.resources.build_resources`,
+which yields a `Resources` bundle and tears it down in reverse order. The API's lifespan
+stores it on `app.state.resources` and registers the readiness checks it cares about.
+Routes reach it through `beacon.infrastructure.dependencies` (`SessionDep`, `RedisDep`).
+
+`SessionDep` opens one session per request and never commits. The service owns the
+transaction (`await session.commit()` or `async with session.begin()`); repositories only
+`add`, `flush` and query. Anything left uncommitted is rolled back when the session closes.
 
 ## Configuration
 

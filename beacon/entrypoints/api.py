@@ -1,3 +1,7 @@
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from functools import partial
+
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse
 from scalar_fastapi import get_scalar_api_reference
@@ -5,13 +9,39 @@ from scalar_fastapi import get_scalar_api_reference
 from beacon.core import health
 from beacon.core.config import get_settings
 from beacon.core.exception_handlers import register_exception_handlers
-from beacon.core.lifespan import lifespan
-from beacon.core.logging import setup_logging
+from beacon.core.health import ReadinessCheck, register_readiness_checks
+from beacon.core.logging import get_logger, setup_logging
 from beacon.core.middlewares import setup_middlewares
+from beacon.infrastructure.postgres.session import ping_postgres
+from beacon.infrastructure.redis.client import ping_redis
+from beacon.infrastructure.resources import Resources, build_resources
 
 OPENAPI_URL = "/openapi.json"
 
+logger = get_logger(__name__)
+
 docs_router = APIRouter(include_in_schema=False)
+
+
+def readiness_checks(resources: Resources) -> tuple[ReadinessCheck, ...]:
+    return (
+        ReadinessCheck("postgres", partial(ping_postgres, resources.engine)),
+        ReadinessCheck("redis", partial(ping_redis, resources.redis)),
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    settings = get_settings()
+
+    async with build_resources(settings) as resources:
+        app.state.resources = resources
+        register_readiness_checks(app, readiness_checks(resources))
+
+        logger.info("app_started", service=settings.service_name, env=settings.environment)
+        yield
+
+    logger.info("app_stopped", service=settings.service_name)
 
 
 @docs_router.get("/scalar")
